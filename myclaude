@@ -467,6 +467,14 @@ launch_claude() {
     typeset target="${proj_path/#\~/$HOME}"
     typeset mcp_config=$(door_mcp_config "$door")
 
+    # Export session identity for Claude Code's statusLine command to read.
+    # See ~/.claude/settings.json statusLine.command — uses these env vars to
+    # render a stable [Project] | [Machine] header instead of cwd basename + hostname.
+    # Falls back to cwd/hostname when not set (e.g., direct claude launches).
+    export CLAUDE_PROJECT_LABEL="$label"
+    export CLAUDE_MACHINE_LABEL="$MACHINE_NAME"
+    export CLAUDE_DOOR="$door"
+
     if [[ ! -d "$target" ]]; then
         echo "  Directory not found: $proj_path"
         sleep 2
