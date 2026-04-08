@@ -1,0 +1,53 @@
+#!/bin/zsh
+# myclaude-test-all — run myclaude-test for every menu key in parallel.
+# Each key runs in the background, output is aggregated, full per-key logs
+# land in /tmp/myclaude-test-<key>-<entry>.log.
+#
+# Usage:
+#   myclaude-test-all                # all keys, entry=fresh
+#   myclaude-test-all resume         # all keys, entry=resume
+#
+# Exits non-zero if any child failed.
+
+ENTRY="${1:-fresh}"
+CONF_FILE="$HOME/.myclaude/projects.conf"
+
+if [[ ! -f "$CONF_FILE" ]]; then
+    echo "no projects.conf at $CONF_FILE" >&2
+    exit 2
+fi
+
+typeset -a KEYS
+while IFS='|' read -r k door label proj_path; do
+    [[ "$k" == "#"* || -z "$k" ]] && continue
+    expanded="${proj_path/#\~/$HOME}"
+    [[ -d "$expanded" ]] || continue
+    KEYS+=("$k")
+done < "$CONF_FILE"
+
+echo "myclaude-test-all: ${#KEYS[@]} keys, entry=$ENTRY  ($(/bin/date))"
+echo "keys: ${KEYS[*]}"
+echo "----"
+
+typeset -a PIDS
+typeset -A KEY_OF_PID
+for k in "${KEYS[@]}"; do
+    "$HOME/bin/myclaude-test" "$k" "$ENTRY" &
+    PIDS+=($!)
+    KEY_OF_PID[$!]="$k"
+done
+
+FAILS=0
+for pid in "${PIDS[@]}"; do
+    wait "$pid"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+        FAILS=$((FAILS + 1))
+        echo "  -> key ${KEY_OF_PID[$pid]} failed rc=$rc"
+    fi
+done
+
+echo "----"
+echo "done. ${#KEYS[@]} total, $FAILS failed."
+echo "logs: /tmp/myclaude-test-*-${ENTRY}.log"
+exit $FAILS

@@ -1,0 +1,145 @@
+#!/bin/zsh
+# myclaude-test — non-destructive launch simulator for one menu choice
+# Usage: myclaude-test <key> [entry]
+#   key:   single-letter hotkey from ~/.myclaude/projects.conf
+#   entry: fresh|resume|handoff|status (default: fresh)
+#
+# Replicates the exact PATH/OP_WRAP/node detection and launch invocation
+# from ~/bin/myclaude, but instead of execing claude it runs `node --version`.
+# Logs PATH, OP_WRAP, cwd, and exit codes at every checkpoint to:
+#   /tmp/myclaude-test-<key>-<entry>.log
+#
+# Designed for parallel invocation from myclaude-test-all.
+
+set -u
+
+KEY="${1:-}"
+ENTRY="${2:-fresh}"
+
+if [[ -z "$KEY" ]]; then
+    echo "usage: myclaude-test <key> [fresh|resume|handoff|status]" >&2
+    exit 2
+fi
+
+LOG="/tmp/myclaude-test-${KEY}-${ENTRY}.log"
+: > "$LOG"
+
+log() { echo "[$(/bin/date -u +%H:%M:%S)] $*" >> "$LOG"; }
+
+log "=== myclaude-test key=$KEY entry=$ENTRY ==="
+log "parent PATH=$PATH"
+log "parent SHLVL=$SHLVL  ZSH_VERSION=${ZSH_VERSION:-?}"
+
+# ── Replicate myclaude lines 49–61 (node detection + PATH set) ──
+if [[ -x "/opt/homebrew/bin/node" ]]; then
+    NODE_BIN="/opt/homebrew/bin/node"
+    CLI_JS="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+    export PATH="/opt/homebrew/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    log "node-detect: homebrew branch"
+elif [[ -d "$HOME/.nvm/versions/node" ]]; then
+    NVM_NODE="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node/ | sort -V | tail -1)"
+    NODE_BIN="$NVM_NODE/bin/node"
+    CLI_JS="$NVM_NODE/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+    export PATH="$NVM_NODE/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    log "node-detect: nvm branch -> $NVM_NODE"
+else
+    log "FAIL: no node installation found"
+    echo "FAIL key=$KEY entry=$ENTRY: no node"
+    exit 1
+fi
+log "post-detect PATH=$PATH"
+log "NODE_BIN=$NODE_BIN  exists=$([[ -x $NODE_BIN ]] && echo yes || echo no)"
+log "CLI_JS=$CLI_JS      exists=$([[ -f $CLI_JS ]] && echo yes || echo no)"
+
+CONF_DIR="$HOME/.myclaude"
+CONF_FILE="$CONF_DIR/projects.conf"
+MCP_DIR="$CONF_DIR/mcp"
+HISTORY_LOG="/tmp/myclaude-test-history.log"  # don't pollute real history
+MACHINE_NAME="${MYCLAUDE_MACHINE:-$(hostname -s)}"
+
+# ── Replicate op-env wrap detection (lines 85–91) ──
+OP_ENV_FILE="$CONF_DIR/op-env"
+typeset -a OP_WRAP
+if command -v op >/dev/null 2>&1 && [[ -f "$OP_ENV_FILE" ]] && op account list >/dev/null 2>&1; then
+    OP_WRAP=(op run --env-file="$OP_ENV_FILE" --)
+    log "op-wrap: ENABLED  op=$(command -v op)"
+else
+    OP_WRAP=()
+    log "op-wrap: DISABLED  has_op=$(command -v op 2>/dev/null || echo no)  has_envfile=$([[ -f $OP_ENV_FILE ]] && echo yes || echo no)"
+fi
+log "OP_WRAP=(${OP_WRAP[*]})"
+
+# ── Look up the requested project from projects.conf ──
+FOUND=0
+while IFS='|' read -r k door label proj_path; do
+    [[ "$k" == "#"* || -z "$k" ]] && continue
+    if [[ "$k" == "$KEY" ]]; then
+        FOUND=1
+        PROJECT_DOOR="$door"
+        PROJECT_LABEL="$label"
+        PROJECT_PATH="$proj_path"
+        break
+    fi
+done < "$CONF_FILE"
+
+if [[ $FOUND -eq 0 ]]; then
+    log "FAIL: key '$KEY' not in $CONF_FILE"
+    echo "FAIL key=$KEY entry=$ENTRY: key not found"
+    exit 1
+fi
+
+TARGET="${PROJECT_PATH/#\~/$HOME}"
+log "selected: door=$PROJECT_DOOR label='$PROJECT_LABEL' path=$PROJECT_PATH"
+log "TARGET=$TARGET  exists=$([[ -d $TARGET ]] && echo yes || echo no)"
+
+if [[ ! -d "$TARGET" ]]; then
+    log "FAIL: target dir missing"
+    echo "FAIL key=$KEY entry=$ENTRY: dir missing"
+    exit 1
+fi
+
+# Pick mcp config the same way myclaude does
+case "$PROJECT_DOOR" in
+    Business) MCP_CONFIG="$MCP_DIR/business.json" ;;
+    Personal) MCP_CONFIG="$MCP_DIR/personal.json" ;;
+    Bench)    MCP_CONFIG="$MCP_DIR/bench.json" ;;
+    *)        MCP_CONFIG="$MCP_DIR/bench.json" ;;
+esac
+log "MCP_CONFIG=$MCP_CONFIG  exists=$([[ -f $MCP_CONFIG ]] && echo yes || echo no)"
+
+# ── Re-enter the same code path as launch_claude: cd, log_launch, exec ──
+cd "$TARGET" || { log "FAIL: cd $TARGET"; echo "FAIL key=$KEY entry=$ENTRY: cd"; exit 1; }
+log "after cd: pwd=$(/bin/pwd)  PATH=$PATH"
+
+# Replicate log_launch — this is where the user's M4 errors came from
+log_launch_test() {
+    typeset door="$1" label="$2" entry="$3"
+    log "log_launch_test: PATH at entry=$PATH"
+    typeset ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    typeset rc=$?
+    log "log_launch_test: date rc=$rc ts='$ts'"
+    echo "$ts | $door | $label | $entry | $MACHINE_NAME" >> "$HISTORY_LOG"
+}
+log_launch_test "$PROJECT_DOOR" "$PROJECT_LABEL" "$ENTRY"
+
+# Replicate the OP_WRAP exec — but call `node --version` instead of cli.js
+log "about to exec wrapped node --version  PATH=$PATH"
+typeset -a claude_args
+claude_args=(--mcp-config "$MCP_CONFIG" --strict-mcp-config)
+
+# We can't actually pass --mcp-config to `node --version`, so just run the wrap shape
+if [[ ${#OP_WRAP[@]} -gt 0 ]]; then
+    "${OP_WRAP[@]}" "$NODE_BIN" --version >> "$LOG" 2>&1
+else
+    "$NODE_BIN" --version >> "$LOG" 2>&1
+fi
+RC=$?
+log "exec rc=$RC"
+
+if [[ $RC -eq 0 ]]; then
+    echo "OK   key=$KEY entry=$ENTRY door=$PROJECT_DOOR label='$PROJECT_LABEL'"
+else
+    echo "FAIL key=$KEY entry=$ENTRY rc=$RC  see $LOG"
+fi
+exit $RC
