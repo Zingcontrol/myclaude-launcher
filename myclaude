@@ -44,19 +44,37 @@ HELP
     exit 0
 fi
 
-# ── Machine-specific node resolution ──
-# Detects Homebrew (M4) or nvm (M1) installations
-if [[ -x "/opt/homebrew/bin/node" ]]; then
-    NODE_BIN="/opt/homebrew/bin/node"
-    CLI_JS="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+# ── Machine-specific node + claude-code resolution ──
+# Prefers whichever node install (Homebrew or nvm) has @anthropic-ai/claude-code
+# actually present. Homebrew wins ties. Surfaces specific install state on error.
+HB_NODE="/opt/homebrew/bin/node"
+HB_CLI="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+NVM_NODE=""
+NVM_CLI=""
+if [[ -d "$HOME/.nvm/versions/node" ]]; then
+    typeset _latest_nvm="$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)"
+    if [[ -n "$_latest_nvm" ]]; then
+        NVM_NODE="$HOME/.nvm/versions/node/$_latest_nvm/bin/node"
+        NVM_CLI="$HOME/.nvm/versions/node/$_latest_nvm/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+    fi
+fi
+
+if [[ -x "$HB_NODE" && -f "$HB_CLI" ]]; then
+    NODE_BIN="$HB_NODE"
+    CLI_JS="$HB_CLI"
     export PATH="/opt/homebrew/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-elif [[ -d "$HOME/.nvm/versions/node" ]]; then
-    NVM_NODE="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node/ | sort -V | tail -1)"
-    NODE_BIN="$NVM_NODE/bin/node"
-    CLI_JS="$NVM_NODE/lib/node_modules/@anthropic-ai/claude-code/cli.js"
-    export PATH="$NVM_NODE/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+elif [[ -n "$NVM_NODE" && -x "$NVM_NODE" && -f "$NVM_CLI" ]]; then
+    NODE_BIN="$NVM_NODE"
+    CLI_JS="$NVM_CLI"
+    export PATH="${NVM_NODE%/node}:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 else
-    echo "Error: No node installation found (checked Homebrew and nvm)"
+    echo "Error: claude-code not found in any node installation."
+    echo "  Homebrew node:  $([[ -x $HB_NODE ]] && echo present || echo missing)"
+    echo "  Homebrew cli.js: $([[ -f $HB_CLI ]] && echo present || echo missing) ($HB_CLI)"
+    echo "  nvm node:       $([[ -n $NVM_NODE && -x $NVM_NODE ]] && echo "present ($NVM_NODE)" || echo missing)"
+    echo "  nvm cli.js:     $([[ -n $NVM_CLI && -f $NVM_CLI ]] && echo present || echo missing)"
+    echo ""
+    echo "Install with: npm install -g @anthropic-ai/claude-code"
     exit 1
 fi
 

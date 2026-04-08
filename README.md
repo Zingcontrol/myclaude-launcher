@@ -25,7 +25,13 @@ Expected: `0 failed` on each. Per-key logs land in `/tmp/myclaude-test-*.log`.
 
 ## Bug history
 
-### 2026-04-07 — `path↔PATH` clobber (Phase 1.7b regression)
+### 2026-04-07 (b) — node/cli.js detection M1 mismatch
+
+**Symptom on M1 Mini (after the path-clobber fix):** myclaude exits at startup with `Error: claude cli.js not found at /opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js`. M1 has homebrew node installed (v24.2.0) but `@anthropic-ai/claude-code` is installed under nvm (v22.17.1), not homebrew. The old detection branched on `[[ -x /opt/homebrew/bin/node ]]` first and never checked whether cli.js actually existed there.
+
+**Fix:** Detection now checks both Homebrew and nvm and picks whichever has BOTH `node` AND `cli.js`. Homebrew wins ties. Clear error surfaces the install state of both branches if neither is usable.
+
+### 2026-04-07 (a) — `path↔PATH` clobber (Phase 1.7b regression)
 
 **Symptom on M4 Mini:** Every menu choice exited 127 with:
 

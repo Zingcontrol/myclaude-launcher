@@ -30,21 +30,36 @@ log "=== myclaude-test key=$KEY entry=$ENTRY ==="
 log "parent PATH=$PATH"
 log "parent SHLVL=$SHLVL  ZSH_VERSION=${ZSH_VERSION:-?}"
 
-# ── Replicate myclaude lines 49–61 (node detection + PATH set) ──
-if [[ -x "/opt/homebrew/bin/node" ]]; then
-    NODE_BIN="/opt/homebrew/bin/node"
-    CLI_JS="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+# ── Replicate myclaude node + claude-code resolution (cli.js-aware) ──
+HB_NODE="/opt/homebrew/bin/node"
+HB_CLI="/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+NVM_NODE_PATH=""
+NVM_CLI=""
+if [[ -d "$HOME/.nvm/versions/node" ]]; then
+    typeset _latest_nvm="$(ls "$HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)"
+    if [[ -n "$_latest_nvm" ]]; then
+        NVM_NODE_PATH="$HOME/.nvm/versions/node/$_latest_nvm/bin/node"
+        NVM_CLI="$HOME/.nvm/versions/node/$_latest_nvm/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+    fi
+fi
+
+if [[ -x "$HB_NODE" && -f "$HB_CLI" ]]; then
+    NODE_BIN="$HB_NODE"
+    CLI_JS="$HB_CLI"
     export PATH="/opt/homebrew/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-    log "node-detect: homebrew branch"
-elif [[ -d "$HOME/.nvm/versions/node" ]]; then
-    NVM_NODE="$HOME/.nvm/versions/node/$(ls $HOME/.nvm/versions/node/ | sort -V | tail -1)"
-    NODE_BIN="$NVM_NODE/bin/node"
-    CLI_JS="$NVM_NODE/lib/node_modules/@anthropic-ai/claude-code/cli.js"
-    export PATH="$NVM_NODE/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-    log "node-detect: nvm branch -> $NVM_NODE"
+    log "node-detect: homebrew branch (cli.js present)"
+elif [[ -n "$NVM_NODE_PATH" && -x "$NVM_NODE_PATH" && -f "$NVM_CLI" ]]; then
+    NODE_BIN="$NVM_NODE_PATH"
+    CLI_JS="$NVM_CLI"
+    export PATH="${NVM_NODE_PATH%/node}:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    log "node-detect: nvm branch (cli.js present) -> $NVM_NODE_PATH"
 else
-    log "FAIL: no node installation found"
-    echo "FAIL key=$KEY entry=$ENTRY: no node"
+    log "FAIL: claude-code not found in homebrew or nvm"
+    log "  HB_NODE=$([[ -x $HB_NODE ]] && echo present || echo missing)"
+    log "  HB_CLI=$([[ -f $HB_CLI ]] && echo present || echo missing)"
+    log "  NVM_NODE=$([[ -n $NVM_NODE_PATH && -x $NVM_NODE_PATH ]] && echo present || echo missing)"
+    log "  NVM_CLI=$([[ -n $NVM_CLI && -f $NVM_CLI ]] && echo present || echo missing)"
+    echo "FAIL key=$KEY entry=$ENTRY: no claude-code install"
     exit 1
 fi
 log "post-detect PATH=$PATH"
