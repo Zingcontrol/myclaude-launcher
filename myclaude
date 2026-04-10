@@ -494,6 +494,12 @@ launch_claude() {
 
     cd "$target" || { echo "  Failed to cd to $target"; sleep 2; return 1; }
 
+    # Pre-flight sync check — fetches repos, reports staleness
+    typeset preflight_script="$HOME/claude-projects/claude-state/hooks/preflight.sh"
+    if [[ -x "$preflight_script" ]]; then
+        bash "$preflight_script"
+    fi
+
     # Log the launch
     log_launch "$door" "$label" "$entry"
 
@@ -534,6 +540,21 @@ $(cat "$handoff_file")"
     esac
 
     typeset rc=$?
+
+    # Post-session: auto-commit and push claude-state if anything changed
+    typeset state_repo="$HOME/claude-projects/claude-state"
+    if [[ -d "$state_repo/.git" ]]; then
+        typeset state_dirty=$(git -C "$state_repo" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$state_dirty" -gt 0 ]]; then
+            printf "\n  ${C_DIM}Syncing claude-state...${C_RESET}\n"
+            git -C "$state_repo" add -A 2>/dev/null
+            git -C "$state_repo" commit -m "Auto-sync: ${label} session on ${MACHINE_NAME} ($(date +%Y-%m-%d\ %H:%M))" --quiet 2>/dev/null
+            git -C "$state_repo" push --quiet 2>/dev/null && \
+                printf "  ${C_DIM}claude-state pushed.${C_RESET}\n" || \
+                printf "  ${C_DIM}claude-state commit saved locally (push failed).${C_RESET}\n"
+        fi
+    fi
+
     if [[ $rc -ne 0 ]]; then
         echo ""
         echo "  claude exited with code $rc"
