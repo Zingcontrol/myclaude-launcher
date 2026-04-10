@@ -94,6 +94,18 @@ MCP_DIR="$CONF_DIR/mcp"
 HISTORY_LOG="$CONF_DIR/history.log"
 MACHINE_NAME="${MYCLAUDE_MACHINE:-$(hostname -s)}"
 
+# ── Configurable paths ──────────────────────────────────────────────────────
+# Google Drive handoff folders (fall back if project-local handoff/ is empty).
+# These are email-specific mount points. Override in ~/.myclaude/config if needed.
+DRIVE_HANDOFF_BUSINESS="$HOME/Library/CloudStorage/GoogleDrive-matt@zingcontrol.com/My Drive/00-Operator/Handoff-00-Operator"
+DRIVE_HANDOFF_PERSONAL="$HOME/Library/CloudStorage/GoogleDrive-matt@utahdiver.com/My Drive/00-Personal/Handoff-00-Personal"
+
+# Handoff file prefixes — files matching these patterns are preferred over arbitrary .md files.
+HANDOFF_PATTERNS=("SESSION_*" "EOD_*" "HANDOFF_*" "COWORK_*" "CEO_*" "DISPATCH_*" "CHECKPOINT_*")
+
+# Source local overrides if they exist
+[[ -f "$CONF_DIR/config" ]] && source "$CONF_DIR/config"
+
 # ── 1Password env wrap (Phase 1.7b, 2026-04-07) ──
 # If `op` CLI is paired and ~/.myclaude/op-env exists, wrap claude with
 # `op run --env-file=...` so MCP server subprocesses inherit secrets from
@@ -304,7 +316,7 @@ select_project() {
     # Bench goes straight to its own directory
     if [[ "$door" == "Bench" ]]; then
         SELECTED_PROJECT_LABEL="Bench"
-        SELECTED_PROJECT_PATH="$HOME/bench"
+        SELECTED_PROJECT_PATH="$HOME/claude-projects/bench"
         SELECTED_PROJECT_DOOR="Bench"
         return 0
     fi
@@ -521,11 +533,10 @@ launch_claude() {
             # 2. Google Drive handoff folder (cross-surface handoffs)
             # Filter to known handoff prefixes to avoid picking up reference docs.
             typeset handoff_file=""
-            typeset -a handoff_patterns=("SESSION_*" "EOD_*" "HANDOFF_*" "COWORK_*" "CEO_*" "DISPATCH_*" "CHECKPOINT_*")
 
             # 1. Check project-local handoff/ directory
             if [[ -d "$target/handoff" ]]; then
-                for pattern in "${handoff_patterns[@]}"; do
+                for pattern in "${HANDOFF_PATTERNS[@]}"; do
                     handoff_file=$(ls -t "$target/handoff/"${pattern}.md 2>/dev/null | head -1)
                     [[ -n "$handoff_file" ]] && break
                 done
@@ -539,12 +550,12 @@ launch_claude() {
             if [[ -z "$handoff_file" ]]; then
                 typeset drive_handoff=""
                 if [[ "$door" == "Business" ]]; then
-                    drive_handoff="$HOME/Library/CloudStorage/GoogleDrive-matt@zingcontrol.com/My Drive/00-Operator/Handoff-00-Operator"
+                    drive_handoff="$DRIVE_HANDOFF_BUSINESS"
                 elif [[ "$door" == "Personal" ]]; then
-                    drive_handoff="$HOME/Library/CloudStorage/GoogleDrive-matt@utahdiver.com/My Drive/00-Personal/Handoff-00-Personal"
+                    drive_handoff="$DRIVE_HANDOFF_PERSONAL"
                 fi
                 if [[ -n "$drive_handoff" && -d "$drive_handoff" ]]; then
-                    for pattern in "${handoff_patterns[@]}"; do
+                    for pattern in "${HANDOFF_PATTERNS[@]}"; do
                         handoff_file=$(ls -t "$drive_handoff/"${pattern}.md 2>/dev/null | head -1)
                         [[ -n "$handoff_file" ]] && break
                     done
