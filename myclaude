@@ -516,13 +516,45 @@ launch_claude() {
             "${OP_WRAP[@]}" "$NODE_BIN" "$CLI_JS" "${claude_args[@]}" --continue
             ;;
         handoff)
-            # Look for most recent handoff file and feed it as initial prompt (positional arg)
+            # Look for most recent handoff file. Priority:
+            # 1. Project-local handoff/ directory (where session EODs and dispatches land)
+            # 2. Google Drive handoff folder (cross-surface handoffs)
+            # Filter to known handoff prefixes to avoid picking up reference docs.
             typeset handoff_file=""
-            if [[ "$door" == "Business" ]]; then
-                handoff_file=$(ls -t "$HOME/Library/CloudStorage/GoogleDrive-matt@zingcontrol.com/My Drive/00-Operator/Handoff-00-Operator/"*.md 2>/dev/null | head -1)
-            elif [[ "$door" == "Personal" ]]; then
-                handoff_file=$(ls -t "$HOME/Library/CloudStorage/GoogleDrive-matt@utahdiver.com/My Drive/00-Personal/Handoff-00-Personal/"*.md 2>/dev/null | head -1)
+            typeset -a handoff_patterns=("SESSION_*" "EOD_*" "HANDOFF_*" "COWORK_*" "CEO_*" "DISPATCH_*" "CHECKPOINT_*")
+
+            # 1. Check project-local handoff/ directory
+            if [[ -d "$target/handoff" ]]; then
+                for pattern in "${handoff_patterns[@]}"; do
+                    handoff_file=$(ls -t "$target/handoff/"${pattern}.md 2>/dev/null | head -1)
+                    [[ -n "$handoff_file" ]] && break
+                done
+                # If no prefixed files, fall back to most recent .md in handoff/
+                if [[ -z "$handoff_file" ]]; then
+                    handoff_file=$(ls -t "$target/handoff/"*.md 2>/dev/null | head -1)
+                fi
             fi
+
+            # 2. Fall back to Google Drive handoff folder
+            if [[ -z "$handoff_file" ]]; then
+                typeset drive_handoff=""
+                if [[ "$door" == "Business" ]]; then
+                    drive_handoff="$HOME/Library/CloudStorage/GoogleDrive-matt@zingcontrol.com/My Drive/00-Operator/Handoff-00-Operator"
+                elif [[ "$door" == "Personal" ]]; then
+                    drive_handoff="$HOME/Library/CloudStorage/GoogleDrive-matt@utahdiver.com/My Drive/00-Personal/Handoff-00-Personal"
+                fi
+                if [[ -n "$drive_handoff" && -d "$drive_handoff" ]]; then
+                    for pattern in "${handoff_patterns[@]}"; do
+                        handoff_file=$(ls -t "$drive_handoff/"${pattern}.md 2>/dev/null | head -1)
+                        [[ -n "$handoff_file" ]] && break
+                    done
+                    # Fall back to most recent .md if no prefixed files
+                    if [[ -z "$handoff_file" ]]; then
+                        handoff_file=$(ls -t "$drive_handoff/"*.md 2>/dev/null | head -1)
+                    fi
+                fi
+            fi
+
             if [[ -n "$handoff_file" && -f "$handoff_file" ]]; then
                 printf "  ${C_DIM}Loading: $(basename "$handoff_file")${C_RESET}\n\n"
                 typeset prompt_text="Review this handoff document and summarize where we left off, then ask what I want to work on:
